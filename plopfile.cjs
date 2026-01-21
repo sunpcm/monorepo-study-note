@@ -3,8 +3,8 @@
  *
  * Design goals:
  * - Keep new packages consistent (eslint/prettier/tsconfig wiring)
- * - Allow choosing destination: packages/ or packages/configs/ (or custom)
- * - Default to @biu scoped packages
+ * - Allow choosing destination: packages/ or packages/configs/ (or custom subdirs under packages/)
+ * - Set @biu scope for all packages
  */
 
 const path = require("node:path");
@@ -33,8 +33,16 @@ function toFolderName(raw) {
 function toScopedName(raw, scope) {
   const name = String(raw || "").trim();
   if (!name) return "";
+
+  // 如果 name 已经带 @，直接返回
   if (name.startsWith("@")) return name;
-  return `@${scope}/${name}`;
+
+  // 如果 scope 带了 @，先去掉（容错处理）
+  const cleanScope = String(scope || "")
+    .trim()
+    .replace(/^@/, "");
+
+  return `@${cleanScope}/${name}`;
 }
 
 module.exports = function (plop) {
@@ -82,14 +90,8 @@ module.exports = function (plop) {
     prompts: [
       {
         type: "input",
-        name: "scope",
-        message: "Scope (without @):",
-        default: cliDefaults.scope || "niu",
-      },
-      {
-        type: "input",
         name: "name",
-        message: "Package name (e.g. foo or @biu/foo):",
+        message: "Package name (without @biu/, e.g. my-utils):",
         default: cliDefaults.name,
         validate: (v) => (String(v || "").trim() ? true : "Package name is required"),
       },
@@ -105,9 +107,8 @@ module.exports = function (plop) {
       },
       {
         type: "input",
-        name: "dir",
-        message:
-          "Destination directory (relative to repo root). Leave blank to use default for chosen kind:",
+        name: "subdir",
+        message: "Subdirectory under packages/ (leave blank for packages/ or packages/configs/):",
         default: cliDefaults.dir || "",
       },
       {
@@ -122,19 +123,21 @@ module.exports = function (plop) {
       },
     ],
     actions: function (answers) {
-      const scope = answers.scope || "niu";
+      const scope = "biu"; // 固定为 @biu
       const react = answers.react === true || answers.react === "true";
-      const scopedName = toScopedName(answers.name, scope);
-      const folderName = toFolderName(scopedName);
+      const nameWithScope = toScopedName(answers.name, scope);
+      const folderName = toFolderName(nameWithScope);
 
-      const defaultBaseDir = answers.kind === "config" ? "packages/configs" : "packages";
-      const baseDir = String(answers.dir || "").trim() || defaultBaseDir;
+      // 如果用户填了 subdir，就拼接到 packages/ 后面；否则根据 kind 决定
+      const defaultSubdir = answers.kind === "config" ? "configs" : "";
+      const subdir = String(answers.subdir || "").trim() || defaultSubdir;
+      const baseDir = subdir ? `packages/${subdir}` : "packages";
       const packageDir = path.posix.join(baseDir, folderName);
 
       // Make derived values available to later actions (especially custom ones).
       answers.packageDir = packageDir;
       answers.folderName = folderName;
-      answers.scopedName = scopedName;
+      answers.nameWithScope = nameWithScope;
 
       return [
         {
@@ -142,7 +145,7 @@ module.exports = function (plop) {
           path: "{{packageDir}}/package.json",
           templateFile: "plop-templates/package/package.json.hbs",
           data: {
-            name: scopedName,
+            nameWithScope: nameWithScope,
             folderName,
             packageDir,
             kind: answers.kind,
@@ -169,7 +172,7 @@ module.exports = function (plop) {
           templateFile: "plop-templates/package/README.md.hbs",
           skipIfExists: true,
           data: {
-            name: scopedName,
+            name: nameWithScope,
             packageDir,
           },
         },
